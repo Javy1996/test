@@ -6,7 +6,7 @@ from llama_index.llms.openai import OpenAI
 import openai
 
 # Configuración visual
-st.set_page_config(page_title="Chatbot Minería (Solo documentos)", layout="centered")
+st.set_page_config(page_title="Chatbot Minería ", layout="centered")
 st.markdown("""
     <style>
     body {
@@ -46,7 +46,7 @@ else:
 # Cargar clave API
 load_dotenv()
 openai.api_key = os.getenv("OPENAI_API_KEY")
-Settings.llm = OpenAI(api_key=openai.api_key, model="gpt-3.5-turbo-0125", temperature=0.5)
+Settings.llm = OpenAI(api_key=openai.api_key, model="gpt-3.5-turbo-0125", temperature=0.9)
 
 # Crear o cargar índice
 @st.cache_resource
