@@ -1,4 +1,3 @@
-
 import streamlit as st
 import os
 from dotenv import load_dotenv
@@ -48,7 +47,7 @@ else:
 # Cargar clave API
 load_dotenv()
 openai.api_key = os.getenv("OPENAI_API_KEY")
-Settings.llm = OpenAI(api_key=openai.api_key, model="gpt-3.5-turbo", temperature=0.9)
+Settings.llm = OpenAI(api_key=openai.api_key, model="gpt-3.5-turbo-0125", temperature=0.5)
 
 # Crear o cargar índice desde disco
 @st.cache_resource
@@ -56,13 +55,13 @@ def cargar_indice_rapido():
     if os.path.exists("storage"):
         storage_context = StorageContext.from_defaults(persist_dir="storage")
         return load_index_from_storage(storage_context).as_query_engine(
-            similarity_top_k=3, response_mode="compact", return_source=True
+            similarity_top_k=2, response_mode="compact", return_source=True
         )
     else:
         documentos = SimpleDirectoryReader("docs_mineria").load_data()
         index = VectorStoreIndex.from_documents(documentos)
         index.storage_context.persist(persist_dir="storage")
-        return index.as_query_engine(similarity_top_k=3, response_mode="compact", return_source=True)
+        return index.as_query_engine(similarity_top_k=2, response_mode="compact", return_source=True)
 
 query_engine = cargar_indice_rapido()
 
@@ -77,37 +76,23 @@ if pregunta:
 
         try:
             raw_response = query_engine.query(pregunta)
-            contexto = str(raw_response)
+            respuesta = raw_response.response
             fuentes = raw_response.source_nodes
 
             if pregunta not in st.session_state.historial:
                 st.session_state.historial.append(pregunta)
             st.session_state["pregunta_actual"] = pregunta
 
-            completion = openai.chat.completions.create(
-                model="gpt-3.5-turbo",
-                stream=True,
-                temperature=0.9,
-                messages=[
-                    {"role": "system", "content":
-                     "Eres un asistente experto en ingeniería de minas. "
-                     "Responde con lenguaje técnico y profesional, usando el contexto entregado."},
-                    {"role": "user", "content": f"Contexto:\n{contexto}\n\nPregunta:\n{pregunta}"}
-                ]
-            )
-
-            for chunk in completion:
-                if chunk.choices and chunk.choices[0].delta.content:
-                    texto = chunk.choices[0].delta.content
-                    respuesta_completa += texto
-                    respuesta_stream.markdown(respuesta_completa)
+            st.markdown("### 📘 Respuesta:")
+            st.markdown(respuesta)
 
             if fuentes:
                 st.markdown("---")
                 st.subheader("📄 Citas relevantes del contexto:")
                 for i, fuente in enumerate(fuentes, 1):
                     contenido = fuente.node.get_content().strip()
-                    st.markdown(f"**{i}.**\n\n> {contenido}")
+                    resumen = contenido[:300].replace("\n", " ") + "..."
+                    st.markdown(f"**{i}.**\n\n> {resumen}")
 
         except Exception as e:
             st.error(f"Error al generar respuesta: {str(e)}")
