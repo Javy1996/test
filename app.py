@@ -1,3 +1,4 @@
+
 import streamlit as st
 import os
 from dotenv import load_dotenv
@@ -5,86 +6,110 @@ from llama_index.core import SimpleDirectoryReader, VectorStoreIndex, Settings, 
 from llama_index.llms.openai import OpenAI
 import openai
 
-# Configuración de la interfaz
-st.set_page_config(page_title="Chatbot Minería Rápido", layout="centered")
-st.title("⛏️ Chatbot de Minería - Optimizado")
+# Configuración visual
+st.set_page_config(page_title="Chatbot Minería (Índice en Disco)", layout="centered")
+st.markdown("""
+    <style>
+    body {
+        background-color: #f5f7fa;
+    }
+    h1 {
+        color: #205375;
+    }
+    .stTextInput>div>div>input {
+        border-radius: 0.5rem;
+        padding: 0.5rem;
+    }
+    #MainMenu, footer, header {
+        visibility: hidden;
+    }
+    </style>
+""", unsafe_allow_html=True)
 
-# Historial de preguntas
+st.title("🤖 Chatbot de Minería (Rápido con índice cacheado en disco)")
+
+# Inicializar historial
 if "historial" not in st.session_state:
     st.session_state.historial = []
 
-# Sidebar
-st.sidebar.header("📜 Historial")
-if st.sidebar.button("🧹 Limpiar historial"):
+# Sidebar con historial
+st.sidebar.header("🕘 Historial de preguntas")
+if st.sidebar.button("🗑️ Borrar historial"):
     st.session_state.historial.clear()
     st.experimental_rerun()
 
-for i, pregunta in enumerate(reversed(st.session_state.historial), 1):
-    if st.sidebar.button(f"{i}. {pregunta[:40]}..."):
-        st.session_state["pregunta_actual"] = pregunta
+if st.session_state.historial:
+    for i, pregunta_prev in enumerate(reversed(st.session_state.historial), 1):
+        if st.sidebar.button(f"{i}. {pregunta_prev[:50]}..."):
+            st.session_state["pregunta_actual"] = pregunta_prev
+else:
+    st.sidebar.info("No hay preguntas todavía.")
 
-# Cargar API Key desde entorno seguro
+# Cargar clave API
 load_dotenv()
 openai.api_key = os.getenv("OPENAI_API_KEY")
+Settings.llm = OpenAI(api_key=openai.api_key, model="gpt-3.5-turbo", temperature=0.9)
 
-# Configuración del modelo optimizado
-Settings.llm = OpenAI(
-    api_key=openai.api_key,
-    model="gpt-3.5-turbo-0125",  # Más rápido
-    temperature=0.5              # Más directo
-)
-
-# Cargar o crear índice
+# Crear o cargar índice desde disco
 @st.cache_resource
-def cargar_indice():
+def cargar_indice_rapido():
     if os.path.exists("storage"):
-        storage = StorageContext.from_defaults(persist_dir="storage")
-        return load_index_from_storage(storage).as_query_engine(
-            similarity_top_k=2,
-            response_mode="no_text",
-            return_source=True
+        storage_context = StorageContext.from_defaults(persist_dir="storage")
+        return load_index_from_storage(storage_context).as_query_engine(
+            similarity_top_k=3, response_mode="compact", return_source=True
         )
     else:
-        docs = SimpleDirectoryReader("docs_mineria").load_data()
-        index = VectorStoreIndex.from_documents(docs)
+        documentos = SimpleDirectoryReader("docs_mineria").load_data()
+        index = VectorStoreIndex.from_documents(documentos)
         index.storage_context.persist(persist_dir="storage")
-        return index.as_query_engine(
-            similarity_top_k=2,
-            response_mode="no_text",
-            return_source=True
-        )
+        return index.as_query_engine(similarity_top_k=3, response_mode="compact", return_source=True)
 
-query_engine = cargar_indice()
+query_engine = cargar_indice_rapido()
 
-# Entrada de pregunta
-pregunta = st.text_input("Pregunta técnica de minería:", value=st.session_state.get("pregunta_actual", ""))
+# Entrada del usuario
+pregunta = st.text_input("Escribe tu pregunta sobre minería:",
+                         value=st.session_state.get("pregunta_actual", ""))
 
 if pregunta:
-    with st.spinner("Procesando..."):
-        raw_response = query_engine.query(pregunta)
-        contexto = str(raw_response)
+    with st.spinner("Consultando contexto..."):
+        respuesta_completa = ""
+        respuesta_stream = st.empty()
 
-        # Guardar en historial
-        if pregunta not in st.session_state.historial:
-            st.session_state.historial.append(pregunta)
-        st.session_state["pregunta_actual"] = pregunta
-
-        # Pregunta al modelo
         try:
-            respuesta = openai.chat.completions.create(
-                model="gpt-3.5-turbo-0125",
-                temperature=0.5,
-                messages=[
-                    {"role": "system", "content": "Eres un experto en minería. Responde de forma técnica, clara y breve."},
-                    {"role": "user", "content": f"Usa este contexto:\n{contexto}\n\nPregunta:\n{pregunta}"}
-                ]
-            ).choices[0].message.content
+            raw_response = query_engine.query(pregunta)
+            contexto = str(raw_response)
+            fuentes = raw_response.source_nodes
 
-            st.markdown("### 📘 Respuesta:")
-            st.write(respuesta)
+            if pregunta not in st.session_state.historial:
+                st.session_state.historial.append(pregunta)
+            st.session_state["pregunta_actual"] = pregunta
+
+            completion = openai.chat.completions.create(
+                model="gpt-3.5-turbo",
+                stream=True,
+                temperature=0.9,
+                messages=[
+                    {"role": "system", "content":
+                     "Eres un asistente experto en ingeniería de minas. "
+                     "Responde con lenguaje técnico y profesional, usando el contexto entregado."},
+                    {"role": "user", "content": f"Contexto:\n{contexto}\n\nPregunta:\n{pregunta}"}
+                ]
+            )
+
+            for chunk in completion:
+                if chunk.choices and chunk.choices[0].delta.content:
+                    texto = chunk.choices[0].delta.content
+                    respuesta_completa += texto
+                    respuesta_stream.markdown(respuesta_completa)
+
+            if fuentes:
+                st.markdown("---")
+                st.subheader("📄 Citas relevantes del contexto:")
+                for i, fuente in enumerate(fuentes, 1):
+                    contenido = fuente.node.get_content().strip()
+                    st.markdown(f"**{i}.**\n\n> {contenido}")
 
         except Exception as e:
-            st.error(f"Error: {str(e)}")
-
+            st.error(f"Error al generar respuesta: {str(e)}")
 else:
-    st.info("Escribe tu pregunta relacionada con minería para comenzar.")       
+    st.info("Por favor, ingresa una pregunta.")
